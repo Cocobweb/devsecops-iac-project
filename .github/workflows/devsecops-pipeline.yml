@@ -169,6 +169,7 @@ jobs:
       - name: Build Docker image for Trivy
         run: docker build -t devsecops-app:latest ./app
 
+
       - name: Generate security report
         run: |
           DATE=$(date '+%Y-%m-%d %H:%M UTC')
@@ -195,12 +196,12 @@ jobs:
             echo ""
             echo "## tfsec — IaC Security"
             echo '```'
-            tfsec . --soft-fail 2>&1 || true
+            tfsec . --soft-fail --no-color 2>&1 || true
             echo '```'
             echo ""
             echo "## Trivy — Image Vulnerabilities"
             echo '```'
-            docker run --rm aquasec/trivy image --severity CRITICAL,HIGH --no-progress devsecops-app:latest 2>&1 || true
+            trivy image --severity CRITICAL,HIGH --no-progress --format table devsecops-app:latest 2>&1 || true
             echo '```'
             echo ""
             echo "## Security Rules Tests"
@@ -218,6 +219,8 @@ jobs:
 
           echo "--- Rapport généré ---"
           cat security-report.md
+
+
 
       - name: Upload security report
         uses: actions/upload-artifact@v4
