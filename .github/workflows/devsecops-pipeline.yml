@@ -89,3 +89,57 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest ./app
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
+
+  # ─── JOB 5 : Tests sécurité réseau ────────────────────────────────────────
+  security-tests:
+    name: Tests — Security Rules
+    runs-on: ubuntu-latest
+    needs: [checkov-terraform]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install tfsec
+        run: |
+          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+
+      - name: Run tfsec
+        run: tfsec . --soft-fail
+
+      - name: Verify security rules in Terraform
+        run: |
+          echo "=== Vérification des règles de sécurité ==="
+
+          # Vérifier que le port 22 SSH n'est pas ouvert publiquement
+          if grep -E 'from_port\s*=\s*22' main.tf && grep -E 'cidr_blocks\s*=\s*\["0\.0\.0\.0/0"\]' main.tf; then
+            echo "FAIL : Port 22 ouvert publiquement détecté"
+            exit 1
+          else
+            echo "PASS : Port 22 non exposé publiquement"
+          fi
+
+          # Vérifier que IMDSv2 est forcé
+          if grep -q 'http_tokens.*required' main.tf; then
+            echo "PASS : IMDSv2 forcé"
+          else
+            echo "FAIL : IMDSv2 non forcé"
+            exit 1
+          fi
+
+          # Vérifier que l'EC2 n'a pas d'IP publique
+          if grep -q 'associate_public_ip_address = false' main.tf; then
+            echo "PASS : EC2 sans IP publique"
+          else
+            echo "FAIL : EC2 avec IP publique"
+            exit 1
+          fi
+
+          # Vérifier que le chiffrement EBS est activé
+          if grep -q 'encrypted = true' main.tf; then
+            echo "PASS : EBS chiffré"
+          else
+            echo "FAIL : EBS non chiffré"
+            exit 1
+          fi
+
+          echo "=== Tous les tests sont passés ==="
