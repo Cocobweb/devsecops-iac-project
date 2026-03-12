@@ -166,6 +166,11 @@ jobs:
           pip install checkov --break-system-packages
           curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
 
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          version: v0.69.3
+
       - name: Build Docker image for Trivy
         run: docker build -t devsecops-app:latest ./app
 
