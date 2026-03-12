@@ -1,0 +1,16 @@
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.*.backup
+.terraform/
+.terraform.lock.hcl
+
+# Secrets
+*.tfvars
+*.env
+
+# Binaires
+*.deb
+
+# Divers
+test.txt
