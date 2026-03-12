@@ -1,13 +1,9 @@
-# ==============================================================================
-# 0. Provider AWS
-# ==============================================================================
+# 0️ Provider AWS
 provider "aws" {
   region = "eu-north-1"
 }
 
-# ==============================================================================
-# 1. VPC
-# ==============================================================================
+# 1️ VPC
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -28,14 +24,9 @@ resource "aws_default_security_group" "default" {
   }
 }
 
-# ==============================================================================
-# 2. VPC Flow Logs vers CloudWatch — FIX CKV2_AWS_11
-# ==============================================================================
-
-# KMS hors scope sandbox — clés AWS managées. CMK requise en production.
-#tfsec:ignore:aws-cloudwatch-log-group-customer-key
+# FIX CKV2_AWS_11 : VPC Flow Logs vers CloudWatch
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
-  #checkov:skip=CKV_AWS_158: KMS hors scope sandbox — chiffré par clés AWS managées. CMK requise en production.
+  #checkov:skip=CKV_AWS_158: Chiffrement KMS hors scope sandbox — chiffré par clés AWS managées. CMK requise en production.
   name              = "/aws/vpc/flow-logs"
   retention_in_days = 365
 }
@@ -55,8 +46,6 @@ resource "aws_iam_role" "flow_logs_role" {
   })
 }
 
-# logs:CreateLogStream obligatoire — ressource contrainte via ARN précis, pas de wildcard réel.
-#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "flow_logs_policy" {
   name = "vpc_flow_logs_policy"
   role = aws_iam_role.flow_logs_role.id
@@ -87,9 +76,9 @@ resource "aws_flow_log" "vpc_flow_log" {
   log_destination = aws_cloudwatch_log_group.vpc_flow_logs.arn
 }
 
-# ==============================================================================
-# 3. Internet Gateway
-# ==============================================================================
+
+
+# 2️ Internet Gateway
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
   tags = {
@@ -97,13 +86,7 @@ resource "aws_internet_gateway" "gw" {
   }
 }
 
-# ==============================================================================
-# 4. Subnets
-# ==============================================================================
-
-# Subnet public — pour Internet Gateway uniquement, aucune EC2 dans ce subnet.
-# L'EC2 est dans subnet_private, ce subnet sert uniquement de point d'entrée IGW.
-#tfsec:ignore:aws-ec2-no-public-ip-subnet
+# 3️ Subnet public (pour Internet Gateway uniquement — pas d'EC2 ici)
 resource "aws_subnet" "subnet_public" {
   #checkov:skip=CKV_AWS_130: Subnet public sans EC2 — L'EC2 est dans subnet_private.
   vpc_id                  = aws_vpc.main.id
@@ -116,7 +99,7 @@ resource "aws_subnet" "subnet_public" {
   }
 }
 
-# Subnet privé — EC2 uniquement, pas d'IP publique
+# 4️ Subnet privé pour EC2
 resource "aws_subnet" "subnet_private" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
@@ -128,11 +111,7 @@ resource "aws_subnet" "subnet_private" {
   }
 }
 
-# ==============================================================================
-# 5. Route tables
-# ==============================================================================
-
-# Route table publique — vers Internet Gateway
+# 5️ Route table publique
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -151,7 +130,7 @@ resource "aws_route_table_association" "public_assoc" {
   route_table_id = aws_route_table.public.id
 }
 
-# Route table privée — subnet EC2, pas de route internet
+# 6️ Route table privée pour le subnet EC2
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
@@ -165,9 +144,9 @@ resource "aws_route_table_association" "private_assoc" {
   route_table_id = aws_route_table.private.id
 }
 
-# ==============================================================================
-# 6. VPC Endpoint S3 Gateway — layers Docker et yum sans internet
-# ==============================================================================
+# 7️ VPC Endpoint S3 Gateway — yum + layers Docker sans internet
+
+# S3 Interface endpoint — résolution DNS privée pour ECR layers + yum
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.eu-north-1.s3"
@@ -182,9 +161,8 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-# ==============================================================================
-# 7. VPC Endpoints SSM — accès SSH-less à l'EC2
-# ==============================================================================
+
+# 8️ VPC Endpoints SSM — accès SSH-less à l'EC2
 resource "aws_vpc_endpoint" "ssm" {
   vpc_id              = aws_vpc.main.id
   service_name        = "com.amazonaws.eu-north-1.ssm"
@@ -212,9 +190,7 @@ resource "aws_vpc_endpoint" "ec2messages" {
   private_dns_enabled = true
 }
 
-# ==============================================================================
-# 8. VPC Endpoints ECR — docker pull depuis l'EC2 sans internet
-# ==============================================================================
+# 9️ VPC Endpoints ECR — docker pull depuis l'EC2 sans internet
 resource "aws_vpc_endpoint" "ecr_api" {
   vpc_id              = aws_vpc.main.id
   service_name        = "com.amazonaws.eu-north-1.ecr.api"
@@ -241,18 +217,11 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   }
 }
 
-# ==============================================================================
-# 9. Security Group
-# ==============================================================================
-
-# Port 80 ouvert publiquement — serveur web public sans ALB en scope sandbox.
-# Egress restreint au CIDR VPC : SSM et ECR transitent par VPC endpoints internes,
-# aucune route internet depuis le subnet privé.
-#tfsec:ignore:aws-ec2-no-public-ingress-sgr
+# 10️ Security Group
 resource "aws_security_group" "sg" {
-  #checkov:skip=CKV_AWS_260: Port 80 ouvert publiquement — serveur web public sans ALB en scope sandbox.
+  #checkov:skip=CKV_AWS_260: Port 80 ouvert publiquement — serveur web public.
   name_prefix = "web-http-only-"
-  description = "Allow HTTP inbound public, HTTPS inbound VPC only, HTTPS outbound VPC only"
+  description = "Allow HTTP only, SSM access via VPC endpoints"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -272,17 +241,18 @@ resource "aws_security_group" "sg" {
   }
 
   egress {
-    description = "Allow HTTPS outbound to VPC only SSM and ECR via VPC endpoints"
+    description = "Allow HTTPS outbound to VPC for SSM and ECR endpoints"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = ["0.0.0.0/0"]
   }
+
 }
 
-# ==============================================================================
-# 10. IAM Role EC2 — SSM + ECR
-# ==============================================================================
+
+
+# 11️ IAM Role EC2 — SSM + ECR
 resource "aws_iam_role" "ssm_role" {
   name = "ec2_ssm_role"
 
@@ -335,9 +305,7 @@ resource "aws_iam_instance_profile" "ssm_profile" {
   role = aws_iam_role.ssm_role.name
 }
 
-# ==============================================================================
-# 11. EC2 Instance dans subnet privé
-# ==============================================================================
+# 12️ EC2 Instance dans subnet privé
 resource "aws_instance" "web" {
   ami                         = "ami-017535a27f2ac0ce3"
   instance_type               = "t3.micro"
@@ -352,7 +320,7 @@ resource "aws_instance" "web" {
   }
 
   metadata_options {
-    http_tokens                 = "required"  # IMDSv2 forcé — protection SSRF
+    http_tokens                 = "required"
     http_put_response_hop_limit = 1
     http_endpoint               = "enabled"
   }
@@ -365,40 +333,18 @@ resource "aws_instance" "web" {
   }
 }
 
-# ==============================================================================
-# 12. Random suffix pour les buckets S3
-# ==============================================================================
+# 13️ Random suffix pour S3
 resource "random_id" "bucket_id" {
   byte_length = 4
 }
 
-# ==============================================================================
-# 13. Bucket logs
-# ==============================================================================
-
-# KMS hors scope sandbox — AES256 suffisant. CMK requise en production.
-# Auto-logging non applicable : ce bucket est lui-même la destination des logs.
-#tfsec:ignore:aws-s3-encryption-customer-key
-#tfsec:ignore:aws-s3-enable-bucket-logging
+# 14️ Bucket logs
 resource "aws_s3_bucket" "logs_bucket" {
   #checkov:skip=CKV2_AWS_62: Event notifications hors scope.
   #checkov:skip=CKV_AWS_144: Cross-region replication hors scope sandbox.
   #checkov:skip=CKV2_AWS_61: Lifecycle hors scope — bucket de logs accessoire.
   #checkov:skip=CKV_AWS_145: KMS hors scope sandbox — AES256 suffisant.
   bucket = "devsecops-iac-project-logs-${random_id.bucket_id.hex}"
-}
-
-# FIX : chiffrement AES256 sur bucket logs
-# KMS hors scope sandbox — AES256 suffisant. CMK requise en production.
-#tfsec:ignore:aws-s3-encryption-customer-key
-resource "aws_s3_bucket_server_side_encryption_configuration" "logs_encrypt" {
-  bucket = aws_s3_bucket.logs_bucket.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
 }
 
 resource "aws_s3_bucket_public_access_block" "logs_block_public" {
@@ -452,12 +398,7 @@ resource "aws_s3_bucket_policy" "cloudtrail_s3_policy" {
   })
 }
 
-# ==============================================================================
-# 14. Bucket principal
-# ==============================================================================
-
-# KMS hors scope sandbox — AES256 suffisant. CMK requise en production.
-#tfsec:ignore:aws-s3-encryption-customer-key
+# 15️ Bucket principal
 resource "aws_s3_bucket" "mybucket" {
   #checkov:skip=CKV2_AWS_62: Event notifications hors scope.
   #checkov:skip=CKV_AWS_144: Cross-region replication hors scope sandbox.
@@ -474,8 +415,6 @@ resource "aws_s3_bucket_public_access_block" "block_public" {
   restrict_public_buckets = true
 }
 
-# KMS hors scope sandbox — AES256 suffisant. CMK requise en production.
-#tfsec:ignore:aws-s3-encryption-customer-key
 resource "aws_s3_bucket_server_side_encryption_configuration" "encrypt" {
   bucket = aws_s3_bucket.mybucket.id
 
@@ -522,9 +461,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "mybucket_lifecycle" {
   }
 }
 
-# ==============================================================================
-# 15. IAM Role CloudTrail -> CloudWatch
-# ==============================================================================
+# 16️ IAM Role CloudTrail -> CloudWatch
 resource "aws_iam_role" "cloudtrail_role" {
   name = "cloudtrail_cloudwatch_role"
 
@@ -540,8 +477,6 @@ resource "aws_iam_role" "cloudtrail_role" {
   })
 }
 
-# logs:CreateLogStream obligatoire — ressource contrainte via ARN précis, pas de wildcard réel.
-#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "cloudtrail_cw_policy" {
   name = "cloudtrail_cloudwatch_policy"
   role = aws_iam_role.cloudtrail_role.id
@@ -562,13 +497,7 @@ resource "aws_iam_role_policy" "cloudtrail_cw_policy" {
   })
 }
 
-# ==============================================================================
-# 16. CloudTrail
-# ==============================================================================
-
-# KMS hors scope sandbox — CMK requise en production.
-# SNS Topic hors scope sandbox.
-#tfsec:ignore:aws-cloudtrail-enable-at-rest-encryption
+# 17️ CloudTrail
 resource "aws_cloudtrail" "main" {
   #checkov:skip=CKV_AWS_35: KMS hors scope sandbox — CMK requise en production.
   #checkov:skip=CKV_AWS_252: SNS Topic hors scope sandbox.
