@@ -56,7 +56,7 @@ jobs:
       - name: Install tfsec
         run: curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
       - name: Run tfsec
-        run: tfsec . --minimun-security HIGH
+        run: tfsec . --minimum-severity HIGH
       - name: Verify Terraform security rules
         run: |
           echo "=== Vérification des règles de sécurité ==="
