@@ -28,7 +28,7 @@ jobs:
           directory: .
           framework: terraform
           output_format: cli
-          soft_fail: false  # BLOQUE le pipeline si échec
+          soft_fail: false
 
   # ─── JOB 2 : Scan Dockerfile ──────────────────────────────────────────────
   checkov-docker:
@@ -44,7 +44,7 @@ jobs:
           directory: ./app
           framework: dockerfile
           output_format: cli
-          soft_fail: false  # BLOQUE le pipeline si échec
+          soft_fail: false
 
   # ─── JOB 3 : Tests sécurité réseau ────────────────────────────────────────
   security-tests:
@@ -67,7 +67,6 @@ jobs:
           echo "=== Vérification des règles de sécurité ==="
           FAILED=0
 
-          # Vérifier que le port 22 SSH n'est pas ouvert publiquement
           if grep -E 'from_port\s*=\s*22' main.tf && grep -E 'cidr_blocks\s*=\s*\["0\.0\.0\.0/0"\]' main.tf; then
             echo "FAIL : Port 22 ouvert publiquement détecté"
             FAILED=1
@@ -75,7 +74,6 @@ jobs:
             echo "PASS : Port 22 non exposé publiquement"
           fi
 
-          # Vérifier que IMDSv2 est forcé
           if grep -q 'http_tokens.*required' main.tf; then
             echo "PASS : IMDSv2 forcé"
           else
@@ -83,7 +81,6 @@ jobs:
             FAILED=1
           fi
 
-          # Vérifier que l'EC2 n'a pas d'IP publique
           if grep -q 'associate_public_ip_address = false' main.tf; then
             echo "PASS : EC2 sans IP publique"
           else
@@ -91,7 +88,6 @@ jobs:
             FAILED=1
           fi
 
-          # Vérifier que le chiffrement EBS est activé
           if grep -q 'encrypted = true' main.tf; then
             echo "PASS : EBS chiffré"
           else
@@ -99,12 +95,9 @@ jobs:
             FAILED=1
           fi
 
-          echo "==="
           if [ $FAILED -eq 1 ]; then
-            echo "ECHEC : Un ou plusieurs tests de sécurité ont échoué — push bloqué."
             exit 1
           fi
-          echo "=== Tous les tests sont passés ==="
 
   # ─── JOB 4 : Build + Trivy ────────────────────────────────────────────────
   trivy-scan:
@@ -123,15 +116,14 @@ jobs:
         with:
           image-ref: devsecops-app:latest
           format: table
-          exit-code: 1        # BLOQUE si vulnérabilités CRITICAL ou HIGH
+          exit-code: 1
           severity: CRITICAL,HIGH
 
-  # ─── JOB 5 : Push ECR — conditionné par TOUS les jobs précédents ──────────
+  # ─── JOB 5 : Push ECR ────────────────────────────────────────────────────
   push-ecr:
     name: Push — ECR
     runs-on: ubuntu-latest
     needs: [checkov-terraform, checkov-docker, security-tests, trivy-scan]
-    # Ce job ne tourne QUE si tous les jobs précédents sont success
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -151,85 +143,77 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest ./app
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-  # ─── JOB 6 : Rapport de sécurité — tourne toujours ───────────────────────
-  security-report:
-    name: Report — Security Summary
+  # ─── JOB 6 : Tests d’intrusion simples ───────────────────────────────────
+  intrusion-tests:
+    name: Tests d’intrusion simples
     runs-on: ubuntu-latest
-    needs: [checkov-terraform, checkov-docker, security-tests, trivy-scan]
-    if: always()  # tourne même si les jobs précédents échouent
+    needs: [push-ecr]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install Nmap
+        run: sudo apt-get update && sudo apt-get install -y nmap
+
+      - name: Scanner les ports
         run: |
-          pip install checkov --break-system-packages
-          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+          # Remplacez par IP interne de test si nécessaire
+          TARGET_IP="10.0.1.5"
+          echo "Scanning $TARGET_IP..."
+          nmap -Pn $TARGET_IP > nmap-output.txt
+          if grep -q "filtered" nmap-output.txt; then
+            echo "Attention: certains ports sont filtrés ou fermés"
+          fi
+          cat nmap-output.txt
 
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.0
-        with:
-          version: v0.69.3
-
-      - name: Build Docker image for Trivy
-        run: docker build -t devsecops-app:latest ./app
-
-
-      - name: Generate security report
+      - name: Vérifier accès non autorisé / règles exposées
         run: |
-          DATE=$(date '+%Y-%m-%d %H:%M UTC')
-          COMMIT=$(git rev-parse --short HEAD)
+          FAILED=0
+          # Exemple simple : port 22 ne doit pas être ouvert
+          if grep -E '22/tcp open' nmap-output.txt; then
+            echo "FAIL : Port SSH ouvert publiquement"
+            FAILED=1
+          else
+            echo "PASS : Port SSH non exposé"
+          fi
 
-          {
-            echo "# Security Scan Report"
-            echo ""
-            echo "**Date:** $DATE"
-            echo "**Commit:** $COMMIT"
-            echo "**Branch:** ${{ github.ref_name }}"
-            echo ""
-            echo "---"
-            echo ""
-            echo "## Checkov — Terraform IaC"
-            echo '```'
-            checkov -d . --framework terraform --compact 2>&1 || true
-            echo '```'
-            echo ""
-            echo "## Checkov — Dockerfile"
-            echo '```'
-            checkov -d ./app --framework dockerfile --compact 2>&1 || true
-            echo '```'
-            echo ""
-            echo "## tfsec — IaC Security"
-            echo '```'
-            tfsec . --soft-fail --no-color 2>&1 || true
-            echo '```'
-            echo ""
-            echo "## Trivy — Image Vulnerabilities"
-            echo '```'
-            trivy image --severity CRITICAL,HIGH --no-progress --format table devsecops-app:latest 2>&1 || true
-            echo '```'
-            echo ""
-            echo "## Security Rules Tests"
-            echo '```'
-            echo -n "Port 22 exposé publiquement : "
-            (grep -qE 'from_port\s*=\s*22' main.tf && grep -qE 'cidr_blocks.*0\.0\.0\.0' main.tf) && echo "FAIL ❌" || echo "PASS ✅"
-            echo -n "IMDSv2 forcé               : "
-            grep -q 'http_tokens.*required' main.tf && echo "PASS ✅" || echo "FAIL ❌"
-            echo -n "EC2 sans IP publique       : "
-            grep -q 'associate_public_ip_address = false' main.tf && echo "PASS ✅" || echo "FAIL ❌"
-            echo -n "EBS chiffré                : "
-            grep -q 'encrypted = true' main.tf && echo "PASS ✅" || echo "FAIL ❌"
-            echo '```'
-          } > security-report.md
+          # Autres vérifications à rajouter selon besoin
+          if [ $FAILED -eq 1 ]; then
+            exit 1
+          fi
 
-          echo "--- Rapport généré ---"
-          cat security-report.md
+  # ─── JOB 7 : Déploiement sur EC2 via SSM ────────────────────────────────
+  deploy-ec2:
+    name: Déploiement sur EC2 via SSM
+    runs-on: ubuntu-latest
+    needs: [intrusion-tests]  # ne se lance que si intrusion-tests OK
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-
-
-      - name: Upload security report
-        uses: actions/upload-artifact@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          name: security-report-${{ github.sha }}
-          path: security-report.md
-          retention-days: 30
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Déployer sur EC2 via SSM
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=web-instance" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          echo "Instance ID: $INSTANCE_ID"
+
+          aws ssm send-command \
+            --targets "Key=instanceIds,Values=$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Pull dernier code et déploiement Docker" \
+            --parameters 'commands=[
+              "docker pull 509521484299.dkr.ecr.eu-north-1.amazonaws.com/devsecops-app:latest",
+              "docker stop devsecops-app || true",
+              "docker rm devsecops-app || true",
+              "docker run -d --name devsecops-app -p 80:80 509521484299.dkr.ecr.eu-north-1.amazonaws.com/devsecops-app:latest"
+            ]'
