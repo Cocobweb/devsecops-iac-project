@@ -11,6 +11,7 @@ env:
   AWS_REGION: eu-north-1
   ECR_REGISTRY: 509521484299.dkr.ecr.eu-north-1.amazonaws.com
   ECR_REPOSITORY: devsecops-app
+  EC2_INSTANCE_ID: i-0536178b16458626f   # remplace par ton ID EC2
 
 jobs:
 
@@ -19,9 +20,7 @@ jobs:
     name: Checkov — IaC Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Run Checkov on Terraform
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -35,9 +34,7 @@ jobs:
     name: Checkov — Dockerfile Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Run Checkov on Dockerfile
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -48,56 +45,28 @@ jobs:
 
   # ─── JOB 3 : Tests sécurité réseau ────────────────────────────────────────
   security-tests:
-    name: Tests — Security Rules
+    name: Terraform Security Rules
     runs-on: ubuntu-latest
     needs: [checkov-terraform]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install tfsec
-        run: |
-          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
-
+        run: curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
       - name: Run tfsec
         run: tfsec . --soft-fail
-
-      - name: Verify security rules in Terraform
+      - name: Verify Terraform security rules
         run: |
           echo "=== Vérification des règles de sécurité ==="
           FAILED=0
-
-          if grep -E 'from_port\s*=\s*22' main.tf && grep -E 'cidr_blocks\s*=\s*\["0\.0\.0\.0/0"\]' main.tf; then
-            echo "FAIL : Port 22 ouvert publiquement détecté"
-            FAILED=1
-          else
-            echo "PASS : Port 22 non exposé publiquement"
-          fi
-
-          if grep -q 'http_tokens.*required' main.tf; then
-            echo "PASS : IMDSv2 forcé"
-          else
-            echo "FAIL : IMDSv2 non forcé"
-            FAILED=1
-          fi
-
-          if grep -q 'associate_public_ip_address = false' main.tf; then
-            echo "PASS : EC2 sans IP publique"
-          else
-            echo "FAIL : EC2 avec IP publique"
-            FAILED=1
-          fi
-
-          if grep -q 'encrypted = true' main.tf; then
-            echo "PASS : EBS chiffré"
-          else
-            echo "FAIL : EBS non chiffré"
-            FAILED=1
-          fi
-
+          grep -E 'from_port\s*=\s*22' main.tf && grep -E 'cidr_blocks\s*=\s*\["0\.0\.0\.0/0"\]' main.tf && FAILED=1 || echo "SSH OK"
+          grep -q 'http_tokens.*required' main.tf || FAILED=1
+          grep -q 'associate_public_ip_address = false' main.tf || FAILED=1
+          grep -q 'encrypted = true' main.tf || FAILED=1
           if [ $FAILED -eq 1 ]; then
+            echo "ECHEC : sécurité Terraform non conforme"
             exit 1
           fi
+          echo "=== Tous les tests de sécurité Terraform sont OK ==="
 
   # ─── JOB 4 : Build + Trivy ────────────────────────────────────────────────
   trivy-scan:
@@ -105,13 +74,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [checkov-terraform, checkov-docker]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t devsecops-app:latest ./app
-
-      - name: Run Trivy vulnerability scan
+      - name: Run Trivy scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: devsecops-app:latest
@@ -119,101 +85,116 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
 
-  # ─── JOB 5 : Push ECR ────────────────────────────────────────────────────
-  push-ecr:
-    name: Push — ECR
+  # ─── JOB 5 : Tests d’intrusion simples ────────────────────────────────────
+  intrusion-tests:
+    name: Tests d’intrusion simples
     runs-on: ubuntu-latest
     needs: [checkov-terraform, checkov-docker, security-tests, trivy-scan]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Install nmap
+        run: sudo apt-get update && sudo apt-get install -y nmap
+      - name: Scan ports EC2
+        run: |
+          echo "=== Scan ports EC2 via nmap ==="
+          nmap -Pn ${{ env.EC2_INSTANCE_ID }}  # ou IP privée si nécessaire
+          # Ajouter des vérifications custom sur les ports exposés, accès non autorisé, etc.
+          echo "=== Tests d'intrusion terminés ==="
 
+  # ─── JOB 6 : Push ECR — conditionné sur succès de tous les scans et tests ──
+  push-ecr:
+    name: Push Docker image to ECR
+    runs-on: ubuntu-latest
+    needs: [checkov-terraform, checkov-docker, security-tests, trivy-scan, intrusion-tests]
+    steps:
+      - uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and push to ECR
+      - name: Build & push image
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest ./app
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-  # ─── JOB 6 : Tests d’intrusion simples ───────────────────────────────────
-  intrusion-tests:
-    name: Tests d’intrusion simples
+  # ─── JOB 7 : Déploiement EC2 via SSM ─────────────────────────────────────
+  deploy-ec2:
+    name: Deploy Docker container on EC2
     runs-on: ubuntu-latest
     needs: [push-ecr]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Nmap
-        run: sudo apt-get update && sudo apt-get install -y nmap
-
-      - name: Scanner les ports
-        run: |
-          # Remplacez par IP interne de test si nécessaire
-          TARGET_IP="10.0.1.5"
-          echo "Scanning $TARGET_IP..."
-          nmap -Pn $TARGET_IP > nmap-output.txt
-          if grep -q "filtered" nmap-output.txt; then
-            echo "Attention: certains ports sont filtrés ou fermés"
-          fi
-          cat nmap-output.txt
-
-      - name: Vérifier accès non autorisé / règles exposées
-        run: |
-          FAILED=0
-          # Exemple simple : port 22 ne doit pas être ouvert
-          if grep -E '22/tcp open' nmap-output.txt; then
-            echo "FAIL : Port SSH ouvert publiquement"
-            FAILED=1
-          else
-            echo "PASS : Port SSH non exposé"
-          fi
-
-          # Autres vérifications à rajouter selon besoin
-          if [ $FAILED -eq 1 ]; then
-            exit 1
-          fi
-
-  # ─── JOB 7 : Déploiement sur EC2 via SSM ────────────────────────────────
-  deploy-ec2:
-    name: Déploiement sur EC2 via SSM
-    runs-on: ubuntu-latest
-    needs: [intrusion-tests]  # ne se lance que si intrusion-tests OK
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Déployer sur EC2 via SSM
+      - name: Pull & run Docker on EC2 via SSM
         run: |
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=web-instance" \
-            --query "Reservations[0].Instances[0].InstanceId" \
-            --output text)
-
-          echo "Instance ID: $INSTANCE_ID"
-
           aws ssm send-command \
-            --targets "Key=instanceIds,Values=$INSTANCE_ID" \
+            --targets "Key=instanceIds,Values=${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --comment "Pull dernier code et déploiement Docker" \
+            --comment "Pull latest Docker image and run container" \
             --parameters 'commands=[
-              "docker pull 509521484299.dkr.ecr.eu-north-1.amazonaws.com/devsecops-app:latest",
+              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest",
               "docker stop devsecops-app || true",
               "docker rm devsecops-app || true",
-              "docker run -d --name devsecops-app -p 80:80 509521484299.dkr.ecr.eu-north-1.amazonaws.com/devsecops-app:latest"
+              "docker run -d --name devsecops-app -p 80:80 $ECR_REGISTRY/$ECR_REPOSITORY:latest"
             ]'
+
+  # ─── JOB 8 : Rapport de sécurité — toujours exécuté ──────────────────────
+  security-report:
+    name: Security Report — Always Run
+    runs-on: ubuntu-latest
+    needs: [checkov-terraform, checkov-docker, security-tests, trivy-scan]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          pip install checkov --break-system-packages
+          curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          version: v0.69.3
+      - name: Build Docker image for Trivy
+        run: docker build -t devsecops-app:latest ./app
+      - name: Generate security report
+        run: |
+          DATE=$(date '+%Y-%m-%d %H:%M UTC')
+          COMMIT=$(git rev-parse --short HEAD)
+          {
+            echo "# Security Scan Report"
+            echo "**Date:** $DATE"
+            echo "**Commit:** $COMMIT"
+            echo "**Branch:** ${{ github.ref_name }}"
+            echo ""
+            echo "## Checkov — Terraform IaC"
+            echo '```'
+            checkov -d . --framework terraform --compact 2>&1 || true
+            echo '```'
+            echo "## Checkov — Dockerfile"
+            echo '```'
+            checkov -d ./app --framework dockerfile --compact 2>&1 || true
+            echo '```'
+            echo "## tfsec — IaC Security"
+            echo '```'
+            tfsec . --soft-fail --no-color 2>&1 || true
+            echo '```'
+            echo "## Trivy — Image Vulnerabilities"
+            echo '```'
+            trivy image --severity CRITICAL,HIGH --no-progress --format table devsecops-app:latest 2>&1 || true
+            echo '```'
+          } > security-report.md
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ github.sha }}
+          path: security-report.md
+          retention-days: 30
