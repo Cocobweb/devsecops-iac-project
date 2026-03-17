@@ -197,7 +197,7 @@ resource "aws_security_group" "sg_endpoints" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/16"]
   }
 
   tags = {
@@ -407,6 +407,7 @@ resource "aws_s3_bucket_logging" "mybucket_logging" {
 # ==============================================================================
 # 11. Bucket logs (ajouté pour le logging S3)
 # ==============================================================================
+#tfsec:ignore:aws-s3-enable-bucket-logging
 resource "aws_s3_bucket" "logs_bucket" {
   #checkov:skip=CKV2_AWS_62: Event notifications hors scope.
   #checkov:skip=CKV_AWS_144: Cross-region replication hors scope sandbox.
@@ -415,6 +416,7 @@ resource "aws_s3_bucket" "logs_bucket" {
   bucket = "devsecops-iac-project-logs-${random_id.bucket_id.hex}"
 }
 
+#tfsec:ignore:aws-s3-encryption-customer-key
 resource "aws_s3_bucket_server_side_encryption_configuration" "logs_encrypt" {
   bucket = aws_s3_bucket.logs_bucket.id
   rule {

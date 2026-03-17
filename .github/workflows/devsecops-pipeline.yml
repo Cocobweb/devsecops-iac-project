@@ -14,7 +14,7 @@ env:
   AWS_REGION: eu-north-1
   ECR_REGISTRY: 509521484299.dkr.ecr.eu-north-1.amazonaws.com
   ECR_REPOSITORY: devsecops-app
-  EC2_INSTANCE_ID: i-0536178b16458626f   # remplace par ton ID EC2
+  EC2_INSTANCE_ID: i-0fbcaff854a14a371
 
 jobs:
 
@@ -56,7 +56,7 @@ jobs:
       - name: Install tfsec
         run: curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
       - name: Run tfsec
-        run: tfsec . --soft-fail
+        run: tfsec . --minimun-security HIGH
       - name: Verify Terraform security rules
         run: |
           echo "=== Vérification des règles de sécurité ==="
