@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tfsec
-        run: curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash
+        run: | curl -sL https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 -o tfsec chmod +x tfsec sudo mv tfsec /usr/local/bin/ tfsec --version
       - name: Run tfsec
         run: tfsec . --minimum-severity HIGH
       - name: Verify Terraform security rules
