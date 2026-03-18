@@ -153,9 +153,7 @@ jobs:
               \"docker stop devsecops-app || true\",
               \"docker rm devsecops-app || true\",
               \"docker run -d --name devsecops-app -p 80:80 ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest\"
-
-      ]"
-
+            ]"
 
 
 
