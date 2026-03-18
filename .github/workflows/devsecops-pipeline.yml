@@ -147,12 +147,18 @@ jobs:
             --targets "Key=instanceIds,Values=${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Pull latest Docker image and run container" \
-            --parameters 'commands=[
-              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest",
-              "docker stop devsecops-app || true",
-              "docker rm devsecops-app || true",
-              "docker run -d --name devsecops-app -p 80:80 $ECR_REGISTRY/$ECR_REPOSITORY:latest"
-            ]'
+            --parameters commands="[
+              \"aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}\",
+              \"docker pull ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest\",
+              \"docker stop devsecops-app || true\",
+              \"docker rm devsecops-app || true\",
+              \"docker run -d --name devsecops-app -p 80:80 ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest\"
+
+      ]"
+
+
+
+
 
   # ─── JOB 8 : Rapport de sécurité — toujours exécuté ──────────────────────
   security-report:
