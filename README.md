@@ -21,11 +21,11 @@
 
 ## Overview
 
-This project demonstrates a **DevSecOps** approach to infrastructure-as-code on AWS. Security is integrated at every step of the pipeline — from Terraform code analysis to Docker image scanning and automated deployment — following the principle of **"security as code"**.
+This project demonstrates a **DevSecOps** approach to infrastructure-as-code on AWS. Security is integrated at every step of the pipeline — from Terraform code analysis to Docker image scanning and automated deployment, following the principle of **"security as code"**.
 
 Key highlights:
 - Infrastructure provisioned entirely with **Terraform** (no manual console clicks)
-- **Zero SSH exposure** — EC2 access via AWS SSM Session Manager only
+- **Zero SSH exposure** : EC2 access via AWS SSM Session Manager only
 - **Security scans block deployment** if critical vulnerabilities are detected
 - EC2 in a **private subnet**, reachable from the internet only through controlled ingress on port 80
 - Docker image pulled from **private ECR repository** via VPC endpoints
@@ -60,9 +60,9 @@ Internet
 ```
 
 **Key design decisions:**
-- EC2 instance lives in the **private subnet** — no public IP
+- EC2 instance lives in the **private subnet**, no public IP
 - Internet Gateway is present but routes only to the public subnet
-- SSM replaces SSH entirely — no port 22, no key pairs
+- SSM replaces SSH entirely, no port 22, no key pairs
 - VPC Endpoints (SSM, ECR, S3) keep all traffic inside AWS backbone
 - VPC Flow Logs capture all network traffic for audit
 
