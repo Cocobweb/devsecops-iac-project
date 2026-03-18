@@ -1,15 +1,15 @@
-# 🔐 DevSecOps IaC Project — AWS Infrastructure with Security Pipeline
+# DevSecOps IaC Project — AWS Infrastructure with Security Pipeline
 
-> Automated, security-hardened AWS infrastructure provisioned with **Terraform**, scanned by **Checkov**, **tfsec** and **Trivy**, deployed via **GitHub Actions CI/CD**.
+> Automated, security-hardened AWS infrastructure provisioned with **Terraform**, scanned by **Checkov**, **tfsec** and **Trivy**, deployed via **GitHub Actions CI/CD** and automatically generating a security report.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
-- [Security Controls](#security-controls)
+- [Security Controls](#examples-of-security-controls-checked)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
@@ -43,19 +43,19 @@ Internet
 │                                             │
 │  ┌──────────────────┐  ┌─────────────────┐  │
 │  │  Public Subnet   │  │  Private Subnet │  │
-│  │  10.0.1.0/24     │  │  10.0.2.0/24   │  │
+│  │  10.0.1.0/24     │  │  10.0.2.0/24    │  │
 │  │                  │  │                 │  │
 │  │  Internet        │  │  ┌───────────┐  │  │
 │  │  Gateway ────────┼──┼─▶│  EC2 Web  │  │  │
 │  │                  │  │  │  Instance │  │  │
 │  └──────────────────┘  │  └─────┬─────┘  │  │
-│                         │        │        │  │
-│                         │  VPC Endpoints  │  │
-│                         │  SSM / ECR / S3 │  │
-│                         └─────────────────┘  │
+│                        │        │        │  │
+│                        │  VPC Endpoints  │  │
+│                        │  SSM / ECR / S3 │  │
+│                        └─────────────────┘  │
 │                                             │
 │  Flow Logs → CloudWatch Logs                │
-│  Default SG locked (no rules)               │
+│  Default SG locked                          │
 └─────────────────────────────────────────────┘
 ```
 
@@ -83,42 +83,41 @@ Internet
 
 ---
 
-## Security Controls
+## Examples of security controls checked
 
 ### Network
 | Control | Status | Detail |
 |---|---|---|
-| SSH (port 22) blocked | ✅ | No rule in any security group |
-| EC2 in private subnet | ✅ | `map_public_ip_on_launch = false` |
-| Default SG locked | ✅ | `aws_default_security_group` with no rules |
-| VPC Flow Logs enabled | ✅ | ALL traffic → CloudWatch |
-| HTTP restricted | ✅ | Port 80 inbound only on EC2 SG |
-| HTTPS internal only | ✅ | Port 443 restricted to `10.0.0.0/16` |
+| SSH (port 22) blocked | OK | No rule in any security group |
+| EC2 in private subnet | OK | `map_public_ip_on_launch = false` |
+| Default SG locked | OK | `aws_default_security_group` with no rules |
+| VPC Flow Logs enabled | OK | ALL traffic → CloudWatch |
+| HTTP restricted | OK | Port 80 inbound only on EC2 SG |
+| HTTPS internal only | OK | Port 443 restricted to `10.0.0.0/16` |
 
 ### Compute
 | Control | Status | Detail |
 |---|---|---|
-| IMDSv2 enforced | ✅ | `http_tokens = "required"` — prevents SSRF |
-| EBS root volume encrypted | ✅ | `encrypted = true` |
-| Detailed monitoring | ✅ | `monitoring = true` |
-| EBS optimized | ✅ | `ebs_optimized = true` |
-| No public IP | ✅ | `associate_public_ip_address = false` |
+| IMDSv2 enforced | OK | `http_tokens = "required"` — prevents SSRF |
+| EBS root volume encrypted | OK | `encrypted = true` |
+| Detailed monitoring | OK | `monitoring = true` |
+| EBS optimized | OK | `ebs_optimized = true` |
+| No public IP | OK | `associate_public_ip_address = false` |
 
 ### IAM
 | Control | Status | Detail |
 |---|---|---|
-| Least privilege ECR | ✅ | Only `BatchGetImage` + `GetDownloadUrlForLayer` on specific repo ARN |
-| SSM managed policy | ✅ | `AmazonSSMManagedInstanceCore` only |
-| `ecr:GetAuthorizationToken` | ⚠️ | Requires `Resource: *` — AWS limitation, documented |
+| Least privilege ECR | OK | Only `BatchGetImage` + `GetDownloadUrlForLayer` on specific repo ARN |
+| SSM managed policy | OK | `AmazonSSMManagedInstanceCore` only |
 
 ### Storage (S3)
 | Control | Status | Detail |
 |---|---|---|
-| Public access blocked | ✅ | All 4 block settings enabled |
-| Server-side encryption | ✅ | AES256 (CMK in production) |
-| Versioning enabled | ✅ | Protects against accidental deletion |
-| Access logging | ✅ | Dedicated `logs_bucket` |
-| Lifecycle rules | ✅ | Noncurrent versions purged after 30 days |
+| Public access blocked | OK | All 4 block settings enabled |
+| Server-side encryption | OK | AES256 (CMK in production) |
+| Versioning enabled | OK | Protects against accidental deletion |
+| Access logging | OK | Dedicated `logs_bucket` |
+| Lifecycle rules | OK | Noncurrent versions purged after 30 days |
 
 ---
 
@@ -277,22 +276,9 @@ This project applies DevSecOps principles across all four phases:
 
 **Deploy** — Deployment only occurs after all security gates pass. EC2 access uses SSM — no SSH keys, no exposed port 22, no bastion host.
 
----
-
-## Known Limitations (Sandbox Scope)
-
-| Item | Sandbox | Production Recommendation |
-|---|---|---|
-| S3 encryption | AES256 (AWS-managed) | Customer-managed KMS key |
-| CloudWatch logs encryption | AWS-managed | CMK via KMS |
-| Log retention | 7 days | 90+ days |
-| Single AZ | Yes | Multi-AZ with ALB |
-| Terraform state | Local | Remote (S3 + DynamoDB lock) |
 
 ---
 
 ## Author
+**Corentin Boutault**
 
-**Corentin** — [GitHub](https://github.com/<your-username>)
-
-> Built as a 4-week DevSecOps project covering infrastructure design, security hardening, CI/CD automation and vulnerability scanning.
